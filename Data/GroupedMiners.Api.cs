@@ -6,18 +6,20 @@ namespace GroupedMiners;
 
 public readonly struct GroupedMinerGroup
 {
-	public GroupedMinerGroup(int id, string groupGuid, string name, int minerCount)
+	public GroupedMinerGroup(int id, string groupGuid, string name, int minerCount, bool isEnabled)
 	{
 		Id = id;
 		GroupGuid = groupGuid ?? string.Empty;
 		Name = name ?? string.Empty;
 		MinerCount = Mathf.Max(0, minerCount);
+		IsEnabled = isEnabled;
 	}
 
 	public int Id { get; }
 	public string GroupGuid { get; }
 	public string Name { get; }
 	public int MinerCount { get; }
+	public bool IsEnabled { get; }
 }
 
 public interface IGroupedMinersApi
@@ -31,12 +33,16 @@ public interface IGroupedMinersApi
 	IReadOnlyList<MonoBehaviour> GetMinersInGroup(int groupId);
 	IReadOnlyList<MonoBehaviour> GetMinersInGroupByGuid(string groupGuid);
 	bool TryGetTargetMiner(out MonoBehaviour miner);
-	int GetTargetMinersGroup();
+	bool TryGetTargetMinerGroup(out int groupId);
 	bool TryGetTargetMinerGroupGuid(out string groupGuid);
 	bool TryGetMinerGroup(MonoBehaviour miner, out int groupId);
 	bool TryGetMinerGroupGuid(MonoBehaviour miner, out string groupGuid);
-	bool ChangeMinerGroup(MonoBehaviour miner, string groupGuid);
-	bool ChangeTargetMinerGroup(string groupGuid);
+	bool TryAssignMinerToGroup(MonoBehaviour miner, int groupId);
+	bool TryAssignMinerToGroupGuid(MonoBehaviour miner, string groupGuid);
+	bool TryAssignTargetMinerToGroup(int groupId);
+	bool TryAssignTargetMinerToGroupGuid(string groupGuid);
+	bool TryUngroupMiner(MonoBehaviour miner);
+	bool TryUngroupTargetMiner();
 
 	bool SetGroupName(int groupId, string name);
 	bool SetGroupNameByGuid(string groupGuid, string name);
@@ -44,7 +50,6 @@ public interface IGroupedMinersApi
 	bool SetGroupEnabledByGuid(string groupGuid, bool enabled);
 	bool SetAllGroupsEnabled(bool enabled);
 
-	bool TryAssignMinerToGroup(MonoBehaviour miner, int groupId);
 	bool TryAssignMinerPositionToGroup(Vector3 position, int groupId, float maxDistance = 0.12f);
 	bool TryAssignMinerPositionToGroupByGuid(Vector3 position, string groupGuid, float maxDistance = 0.12f);
 
@@ -141,12 +146,11 @@ public sealed partial class GroupedMiners
 		return true;
 	}
 
-	public int GetTargetMinersGroup()
+	public bool TryGetTargetMinerGroup(out int groupId)
 	{
-		if (!TryGetTargetMiner(out var miner)) return 0;
-
-		var cfg = ReadConfigForMiner(miner) ?? FindSavedEntryForPosition(miner.transform.position);
-		return Mathf.Clamp(cfg?.group ?? 0, 0, _groupCount);
+		groupId = 0;
+		if (!TryGetTargetMiner(out var miner)) return false;
+		return TryGetMinerGroup(miner, out groupId);
 	}
 
 	public bool TryGetTargetMinerGroupGuid(out string groupGuid)
@@ -175,20 +179,44 @@ public sealed partial class GroupedMiners
 		return TryGetGroupGuidById(groupId, out groupGuid);
 	}
 
-	public bool ChangeMinerGroup(MonoBehaviour miner, string groupGuid)
+	public bool TryAssignMinerToGroup(MonoBehaviour miner, int groupId)
+	{
+		EnsureGroupNamesInitialized();
+		if (groupId < 0 || groupId > _groupCount) return false;
+		return TryAssignMinerToGroupInternal(miner, groupId, showToast: false);
+	}
+
+	public bool TryAssignMinerToGroupGuid(MonoBehaviour miner, string groupGuid)
 	{
 		EnsureGroupNamesInitialized();
 		if (miner == null || !IsAutoMinerType(miner.GetType())) return false;
 		if (!TryResolveGroupGuidToId(groupGuid, out var groupId)) return false;
-		return TryAssignMinerToGroupInternal(miner, groupId, showToast: false);
+		return TryAssignMinerToGroup(miner, groupId);
 	}
 
-	public bool ChangeTargetMinerGroup(string groupGuid)
+	public bool TryAssignTargetMinerToGroup(int groupId)
+	{
+		EnsureGroupNamesInitialized();
+		if (groupId < 0 || groupId > _groupCount) return false;
+		if (!TryGetTargetMiner(out var miner)) return false;
+		return TryAssignMinerToGroup(miner, groupId);
+	}
+
+	public bool TryAssignTargetMinerToGroupGuid(string groupGuid)
 	{
 		EnsureGroupNamesInitialized();
 		if (!TryResolveGroupGuidToId(groupGuid, out var groupId)) return false;
-		if (!TryGetTargetMiner(out var miner)) return false;
-		return TryAssignMinerToGroupInternal(miner, groupId, showToast: false);
+		return TryAssignTargetMinerToGroup(groupId);
+	}
+
+	public bool TryUngroupMiner(MonoBehaviour miner)
+	{
+		return TryAssignMinerToGroup(miner, 0);
+	}
+
+	public bool TryUngroupTargetMiner()
+	{
+		return TryAssignTargetMinerToGroup(0);
 	}
 
 	public bool SetGroupName(int groupId, string name)
@@ -230,13 +258,6 @@ public sealed partial class GroupedMiners
 	{
 		ToggleAllMiners(enabled);
 		return true;
-	}
-
-	public bool TryAssignMinerToGroup(MonoBehaviour miner, int groupId)
-	{
-		EnsureGroupNamesInitialized();
-		if (groupId < 0 || groupId > _groupCount) return false;
-		return TryAssignMinerToGroupInternal(miner, groupId, showToast: false);
 	}
 
 	public bool TryAssignMinerPositionToGroup(Vector3 position, int groupId, float maxDistance = 0.12f)
@@ -308,7 +329,12 @@ public sealed partial class GroupedMiners
 
 	private GroupedMinerGroup BuildGroupInfo(int groupId)
 	{
-		return new GroupedMinerGroup(groupId, GetGroupGuid(groupId), GetGroupDisplayName(groupId), CountGroupMiners(groupId));
+		return new GroupedMinerGroup(
+			groupId,
+			GetGroupGuid(groupId),
+			GetGroupDisplayName(groupId),
+			CountGroupMiners(groupId),
+			IsGroupEnabled(groupId));
 	}
 
 	private int CountGroupMiners(int groupId)

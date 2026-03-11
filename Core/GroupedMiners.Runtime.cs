@@ -38,7 +38,11 @@ public sealed partial class GroupedMiners
 			var mb = all[i];
 			if (mb == null) continue;
 			if (!IsAutoMinerType(mb.GetType())) continue;
+			var resolved = ResolveCoreAutoMinerComponent(mb);
+			if (resolved == null) continue;
+			mb = resolved;
 			var id = mb.GetInstanceID();
+			if (seenIds.Contains(id)) continue;
 			seenIds.Add(id);
 			var existing = ReadConfigForMiner(mb);
 			var state = new MinerRuntimeState

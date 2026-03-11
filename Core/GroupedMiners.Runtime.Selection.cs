@@ -48,12 +48,18 @@ public sealed partial class GroupedMiners
 			var mb = current.GetComponent<MonoBehaviour>();
 			if (mb != null && IsAutoMinerType(mb.GetType()))
 			{
-				if (!IsMinerWithinSelectionCone(cam, mb.transform.position, distance))
+				var resolved = ResolveCoreAutoMinerComponent(mb);
+				if (resolved == null)
 				{
 					current = current.parent;
 					continue;
 				}
-				miner = mb;
+				if (!IsMinerWithinSelectionCone(cam, resolved.transform.position, distance))
+				{
+					current = current.parent;
+					continue;
+				}
+				miner = resolved;
 				return true;
 			}
 
@@ -62,8 +68,10 @@ public sealed partial class GroupedMiners
 			{
 				if (all[i] == null) continue;
 				if (!IsAutoMinerType(all[i].GetType())) continue;
-				if (!IsMinerWithinSelectionCone(cam, all[i].transform.position, distance)) continue;
-				miner = all[i];
+				var resolved = ResolveCoreAutoMinerComponent(all[i]);
+				if (resolved == null) continue;
+				if (!IsMinerWithinSelectionCone(cam, resolved.transform.position, distance)) continue;
+				miner = resolved;
 				return true;
 			}
 
@@ -94,6 +102,39 @@ public sealed partial class GroupedMiners
 			if (string.Equals(typeName, "AutoMiner", StringComparison.Ordinal)) return true;
 			if (string.Equals(typeName, "RapidAutoMiner", StringComparison.Ordinal)) return true;
 			if (typeName.IndexOf("AutoMiner", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+			t = t.BaseType;
+		}
+		return false;
+	}
+
+	private static MonoBehaviour? ResolveCoreAutoMinerComponent(MonoBehaviour source)
+	{
+		if (source == null) return null;
+		if (IsCoreAutoMinerType(source.GetType())) return source;
+
+		var current = source.transform;
+		while (current != null)
+		{
+			var components = current.GetComponents<MonoBehaviour>();
+			for (var i = 0; i < components.Length; i++)
+			{
+				var component = components[i];
+				if (component == null) continue;
+				if (!IsCoreAutoMinerType(component.GetType())) continue;
+				return component;
+			}
+			current = current.parent;
+		}
+
+		return null;
+	}
+
+	private static bool IsCoreAutoMinerType(Type type)
+	{
+		var t = type;
+		while (t != null)
+		{
+			if (string.Equals(t.Name, "AutoMiner", StringComparison.Ordinal)) return true;
 			t = t.BaseType;
 		}
 		return false;

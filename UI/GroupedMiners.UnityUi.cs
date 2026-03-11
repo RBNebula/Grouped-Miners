@@ -18,6 +18,7 @@ public sealed partial class GroupedMiners
 	private Text? _unityTargetText;
 	private Text? _unityCoordsText;
 	private Text? _unityAllGroupsCountText;
+	private Image? _unityAllGroupsStatusDot;
 	private Dropdown? _unityMinerGroupDropdown;
 	private readonly List<int> _unityMinerGroupOptionValues = new();
 	private RectTransform? _unityGroupsContent;
@@ -30,11 +31,12 @@ public sealed partial class GroupedMiners
 	private static Sprite? _unityUiCircleSprite;
 	private const float UnityGroupNameWidth = 160f;
 	private const float UnityGroupCountWidth = 68f;
+	private const float UnityGroupStatusDotWidth = 14f;
 	private const float UnityGroupToggleWidth = 56f;
 	private const float UnityGroupRemoveWidth = 24f;
 	private const float UnityMinerRowSpacing = 8f;
 	private const float UnityGroupRowSpacing = 6f;
-	private const float UnityGroupsScrollReserveWidth = 20f;
+	private const float UnityGroupsScrollReserveWidth = 110f;
 	private const float UnityMinerRightReserveWidth = 50f;
 	private const float UnityGroupsWindowHeight = 620f;
 	private const float UnityMinerWindowHeight = 360f;
@@ -45,6 +47,7 @@ public sealed partial class GroupedMiners
 		public int group;
 		public InputField nameInput = null!;
 		public Text countText = null!;
+		public Image statusDot = null!;
 	}
 
 	private void SetUnityUiVisible(bool visible)
@@ -74,6 +77,7 @@ public sealed partial class GroupedMiners
 		_unityTargetText = null;
 		_unityCoordsText = null;
 		_unityAllGroupsCountText = null;
+		_unityAllGroupsStatusDot = null;
 		_unityMinerGroupDropdown = null;
 		_unityGroupsContent = null;
 		_unityGroupRows.Clear();
@@ -429,6 +433,7 @@ public sealed partial class GroupedMiners
 		{
 			_unityAllGroupsCountText.text = $"{_minerCache.Count} miner(s)";
 		}
+		UpdateStatusDotColor(_unityAllGroupsStatusDot, GetEnabledSummaryForGroup(-1));
 
 		for (var i = 0; i < _unityGroupRows.Count; i++)
 		{
@@ -439,6 +444,7 @@ public sealed partial class GroupedMiners
 				row.nameInput.SetTextWithoutNotify(GetGroupDisplayName(group));
 			}
 			row.countText.text = $"{CountGroupMiners(group)} miner(s)";
+			UpdateStatusDotColor(row.statusDot, GetEnabledSummaryForGroup(group));
 		}
 	}
 
@@ -479,6 +485,7 @@ public sealed partial class GroupedMiners
 		var countElement = _unityAllGroupsCountText.gameObject.GetComponent<LayoutElement>();
 		countElement.preferredWidth = UnityGroupCountWidth;
 		countElement.minWidth = UnityGroupCountWidth;
+		_unityAllGroupsStatusDot = CreateStatusDot(row, "AllMinersStatusDot");
 
 		CreateActionButton(row, "On", () => ToggleAllMiners(true), UnityGroupToggleWidth, 32f);
 		CreateActionButton(row, "Off", () => ToggleAllMiners(false), UnityGroupToggleWidth, 32f);
@@ -515,6 +522,7 @@ public sealed partial class GroupedMiners
 		var countElement = countText.gameObject.GetComponent<LayoutElement>();
 		countElement.preferredWidth = UnityGroupCountWidth;
 		countElement.minWidth = UnityGroupCountWidth;
+		var statusDot = CreateStatusDot(row, $"Group{group}StatusDot");
 
 		CreateActionButton(row, "On", () => ToggleGroupMiners(group, true), UnityGroupToggleWidth, 32f);
 		CreateActionButton(row, "Off", () => ToggleGroupMiners(group, false), UnityGroupToggleWidth, 32f);
@@ -529,7 +537,8 @@ public sealed partial class GroupedMiners
 		{
 			group = group,
 			nameInput = input,
-			countText = countText
+			countText = countText,
+			statusDot = statusDot
 		});
 	}
 
@@ -545,6 +554,35 @@ public sealed partial class GroupedMiners
 		var go = new GameObject(name, typeof(RectTransform));
 		go.transform.SetParent(parent, false);
 		return go.GetComponent<RectTransform>();
+	}
+
+	private Image CreateStatusDot(Transform parent, string name)
+	{
+		var go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+		go.transform.SetParent(parent, false);
+		var image = go.GetComponent<Image>();
+		image.sprite = GetUnityUiCircleSprite();
+		image.type = Image.Type.Simple;
+		image.preserveAspect = true;
+		image.raycastTarget = false;
+
+		var element = go.AddComponent<LayoutElement>();
+		element.preferredWidth = UnityGroupStatusDotWidth;
+		element.minWidth = UnityGroupStatusDotWidth;
+		element.preferredHeight = UnityGroupStatusDotWidth;
+		element.minHeight = UnityGroupStatusDotWidth;
+		return image;
+	}
+
+	private static void UpdateStatusDotColor(Image? dot, MinerEnabledSummary summary)
+	{
+		if (dot == null) return;
+		dot.color = summary switch
+		{
+			MinerEnabledSummary.AllOn => new Color(0.23f, 0.85f, 0.42f, 1f),
+			MinerEnabledSummary.Mixed => new Color(0.98f, 0.65f, 0.21f, 1f),
+			_ => new Color(0.92f, 0.27f, 0.27f, 1f)
+		};
 	}
 
 	private static RectTransform CreateImageRect(Transform parent, string name, Color color)
@@ -873,6 +911,7 @@ public sealed partial class GroupedMiners
 			UnityGroupRowSpacing,
 			UnityGroupNameWidth,
 			UnityGroupCountWidth,
+			UnityGroupStatusDotWidth,
 			UnityGroupToggleWidth,
 			UnityGroupToggleWidth,
 			UnityGroupRemoveWidth);

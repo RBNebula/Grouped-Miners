@@ -67,6 +67,7 @@ public sealed partial class GroupedMiners
 				presetCount = _presetCount,
 				groupNames = GetConfiguredGroupNamesSnapshot(),
 				groupGuids = GetConfiguredGroupGuidsSnapshot(),
+				groupEnabledStates = GetConfiguredGroupEnabledStatesSnapshot(),
 				groupNameA = _groupNameA,
 				groupNameB = _groupNameB,
 				groupNameC = _groupNameC,
@@ -103,6 +104,7 @@ public sealed partial class GroupedMiners
 		SetPresetCount(s.presetCount <= 0 ? DefaultPresetCount : s.presetCount);
 		_groupNames.Clear();
 		_groupGuids.Clear();
+		_groupEnabledStates.Clear();
 		var loadedNames = (s.groupNames ?? Array.Empty<string>()).Where(n => !string.IsNullOrWhiteSpace(n)).ToArray();
 		if (loadedNames.Length > 0)
 		{
@@ -122,6 +124,11 @@ public sealed partial class GroupedMiners
 		for (var i = 0; i < loadedGuids.Length; i++)
 		{
 			_groupGuids.Add(loadedGuids[i].Trim());
+		}
+		var loadedEnabledStates = s.groupEnabledStates ?? Array.Empty<bool>();
+		for (var i = 0; i < loadedEnabledStates.Length; i++)
+		{
+			_groupEnabledStates.Add(loadedEnabledStates[i]);
 		}
 		EnsureGroupNamesInitialized();
 		_debugLogging = s.debugLogging;
@@ -204,6 +211,7 @@ public sealed partial class GroupedMiners
 		s.presetCount = JsonSettingsUtils.ReadInt(json, "presetCount", s.presetCount);
 		s.groupNames = ParseStringArray(JsonSettingsUtils.ReadArrayRaw(json, "groupNames"));
 		s.groupGuids = ParseStringArray(JsonSettingsUtils.ReadArrayRaw(json, "groupGuids"));
+		s.groupEnabledStates = ParseBoolArray(JsonSettingsUtils.ReadArrayRaw(json, "groupEnabledStates"));
 		s.groupNameA = JsonSettingsUtils.ReadString(json, "groupNameA", s.groupNameA);
 		s.groupNameB = JsonSettingsUtils.ReadString(json, "groupNameB", s.groupNameB);
 		s.groupNameC = JsonSettingsUtils.ReadString(json, "groupNameC", s.groupNameC);
@@ -238,6 +246,7 @@ public sealed partial class GroupedMiners
 			$"  \"presetCount\": {Mathf.Clamp(s.presetCount, MinPresetCount, MaxPresetCount)},",
 			$"  \"groupNames\": {JsonSettingsUtils.BuildStringArray(s.groupNames)},",
 			$"  \"groupGuids\": {JsonSettingsUtils.BuildStringArray(s.groupGuids)},",
+			$"  \"groupEnabledStates\": {BuildBoolArray(s.groupEnabledStates)},",
 			$"  \"groupNameA\": \"{JsonSettingsUtils.EscapeJson(s.groupNameA)}\",",
 			$"  \"groupNameB\": \"{JsonSettingsUtils.EscapeJson(s.groupNameB)}\",",
 			$"  \"groupNameC\": \"{JsonSettingsUtils.EscapeJson(s.groupNameC)}\",",
@@ -267,6 +276,35 @@ public sealed partial class GroupedMiners
 			HoverPromptPosition.Bottom => "bottom",
 			_ => "center"
 		};
+	}
+
+	private static bool[] ParseBoolArray(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw)) return Array.Empty<bool>();
+		var matches = System.Text.RegularExpressions.Regex.Matches(
+			raw,
+			@"\b(true|false)\b",
+			System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+		if (matches.Count == 0) return Array.Empty<bool>();
+
+		var values = new bool[matches.Count];
+		for (var i = 0; i < matches.Count; i++)
+		{
+			values[i] = string.Equals(matches[i].Value, "true", StringComparison.OrdinalIgnoreCase);
+		}
+
+		return values;
+	}
+
+	private static string BuildBoolArray(bool[]? values)
+	{
+		if (values == null || values.Length == 0) return "[]";
+		var parts = new string[values.Length];
+		for (var i = 0; i < values.Length; i++)
+		{
+			parts[i] = values[i] ? "true" : "false";
+		}
+		return $"[ {string.Join(", ", parts)} ]";
 	}
 
 }

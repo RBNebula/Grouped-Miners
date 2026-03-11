@@ -82,6 +82,7 @@ public sealed partial class GroupedMiners
 		public int presetCount = DefaultPresetCount;
 		public string[] groupNames = Array.Empty<string>();
 		public string[] groupGuids = Array.Empty<string>();
+		public bool[] groupEnabledStates = Array.Empty<bool>();
 		public string groupNameA = DefaultGroupNameA;
 		public string groupNameB = DefaultGroupNameB;
 		public string groupNameC = DefaultGroupNameC;

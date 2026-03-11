@@ -159,7 +159,6 @@ public sealed partial class GroupedMiners
 
 		if (!_uiOpen)
 		{
-			DrawHoverPrompt();
 			DrawDebugOverlay();
 			return;
 		}

@@ -15,6 +15,13 @@ using UnityEngine.UI;
 namespace GroupedMiners;
 public sealed partial class GroupedMiners
 {
+	private enum MinerEnabledSummary
+	{
+		AllOn,
+		Mixed,
+		AllOff
+	}
+
 	private string GetGroupDisplayName(int group)
 	{
 		if (group <= 0) return "None";
@@ -31,6 +38,15 @@ public sealed partial class GroupedMiners
 		var index = group - 1;
 		if (index < 0 || index >= _groupGuids.Count) return string.Empty;
 		return _groupGuids[index];
+	}
+
+	private bool IsGroupEnabled(int group)
+	{
+		if (group <= 0) return true;
+		EnsureGroupNamesInitialized();
+		var index = group - 1;
+		if (index < 0 || index >= _groupEnabledStates.Count) return true;
+		return _groupEnabledStates[index];
 	}
 
 	private void EnsureGroupNamesInitialized()
@@ -52,6 +68,14 @@ public sealed partial class GroupedMiners
 		if (_groupGuids.Count > _groupCount)
 		{
 			_groupGuids.RemoveRange(_groupCount, _groupGuids.Count - _groupCount);
+		}
+		while (_groupEnabledStates.Count < _groupCount)
+		{
+			_groupEnabledStates.Add(true);
+		}
+		if (_groupEnabledStates.Count > _groupCount)
+		{
+			_groupEnabledStates.RemoveRange(_groupCount, _groupEnabledStates.Count - _groupCount);
 		}
 		for (var i = 0; i < _groupNames.Count; i++)
 		{
@@ -137,6 +161,12 @@ public sealed partial class GroupedMiners
 		return _groupGuids.Take(_groupCount).ToArray();
 	}
 
+	private bool[] GetConfiguredGroupEnabledStatesSnapshot()
+	{
+		EnsureGroupNamesInitialized();
+		return _groupEnabledStates.Take(_groupCount).ToArray();
+	}
+
 	private bool IsValidGroupValue(int group)
 	{
 		return group >= 0 && group <= _groupCount;
@@ -159,6 +189,7 @@ public sealed partial class GroupedMiners
 
 		_groupCount++;
 		_groupNames.Add(BuildDefaultGroupName(_groupCount));
+		_groupEnabledStates.Add(true);
 		SyncLegacyGroupNameFields();
 		SaveSettingsToDisk();
 		return true;
@@ -176,6 +207,7 @@ public sealed partial class GroupedMiners
 		var removedName = GetGroupDisplayName(group);
 		_groupNames.RemoveAt(group - 1);
 		_groupGuids.RemoveAt(group - 1);
+		_groupEnabledStates.RemoveAt(group - 1);
 		_groupCount = Mathf.Clamp(_groupCount - 1, MinGroupCount, MaxGroupCount);
 
 		_edit.group = Mathf.Clamp(RemapGroupAfterRemoval(_edit.group, group), 0, _groupCount);
@@ -263,6 +295,7 @@ public sealed partial class GroupedMiners
 				runtime.config = CloneConfig(existing);
 				runtime.position = mb.transform.position;
 			}
+			TryToggleMinerEnabled(mb, IsGroupEnabled(group));
 		}
 
 		SaveSaveDataToDisk();
@@ -296,6 +329,7 @@ public sealed partial class GroupedMiners
 
 	private void ToggleAllMiners(bool enabled)
 	{
+		ToggleAllGroupStates(enabled);
 		var count = 0;
 		foreach (var kv in _minerCache)
 		{
@@ -306,6 +340,16 @@ public sealed partial class GroupedMiners
 
 	private void ToggleGroupMiners(int group, bool enabled)
 	{
+		if (group > 0 && group <= _groupCount)
+		{
+			var index = group - 1;
+			if (index >= 0 && index < _groupEnabledStates.Count)
+			{
+				_groupEnabledStates[index] = enabled;
+				SaveSettingsToDisk();
+			}
+		}
+
 		var count = 0;
 		foreach (var kv in _minerCache)
 		{
@@ -325,6 +369,14 @@ public sealed partial class GroupedMiners
 	private bool TryToggleMinerEnabled(object miner, bool enabled)
 	{
 		if (!IsObjectAlive(miner)) return false;
+		if (miner is MonoBehaviour mb)
+		{
+			var resolved = ResolveCoreAutoMinerComponent(mb);
+			if (resolved != null)
+			{
+				miner = resolved;
+			}
+		}
 		var type = miner.GetType();
 		var toggleMethod = type.GetMethod("Toggle", AnyInstance, null, new[] { typeof(bool) }, null);
 		if (toggleMethod != null)
@@ -351,6 +403,202 @@ public sealed partial class GroupedMiners
 			return true;
 		}
 		return false;
+	}
+
+	private void ToggleAllGroupStates(bool enabled)
+	{
+		EnsureGroupNamesInitialized();
+		for (var i = 0; i < _groupEnabledStates.Count; i++)
+		{
+			_groupEnabledStates[i] = enabled;
+		}
+		SaveSettingsToDisk();
+	}
+
+	private MinerEnabledSummary GetEnabledSummaryForGroup(int group)
+	{
+		var total = 0;
+		var enabledCount = 0;
+
+		foreach (var kv in _minerCache)
+		{
+			var cfg = GetMinerConfigForSummary(kv.Value);
+			if (group >= 0)
+			{
+				if (cfg == null) continue;
+				if (cfg.group != group) continue;
+			}
+
+			total++;
+			if (TryReadMinerEnabledState(kv.Value.miner, out var isEnabled))
+			{
+				if (isEnabled) enabledCount++;
+				continue;
+			}
+
+			var fallbackEnabled = cfg == null || cfg.group <= 0 || IsGroupEnabled(cfg.group);
+			if (fallbackEnabled) enabledCount++;
+		}
+
+		if (total <= 0)
+		{
+			if (group < 0)
+			{
+				var enabledGroups = 0;
+				var disabledGroups = 0;
+				for (var i = 1; i <= _groupCount; i++)
+				{
+					if (IsGroupEnabled(i)) enabledGroups++;
+					else disabledGroups++;
+				}
+
+				if (enabledGroups > 0 && disabledGroups > 0) return MinerEnabledSummary.Mixed;
+				return enabledGroups > 0 ? MinerEnabledSummary.AllOn : MinerEnabledSummary.AllOff;
+			}
+
+			return IsGroupEnabled(group) ? MinerEnabledSummary.AllOn : MinerEnabledSummary.AllOff;
+		}
+
+		if (enabledCount <= 0) return MinerEnabledSummary.AllOff;
+		if (enabledCount >= total) return MinerEnabledSummary.AllOn;
+		return MinerEnabledSummary.Mixed;
+	}
+
+	private MinerConfigEntry? GetMinerConfigForSummary(MinerRuntimeState runtimeState)
+	{
+		MinerConfigEntry? cfg = null;
+		if (runtimeState.miner is MonoBehaviour mb)
+		{
+			cfg = ReadConfigForMiner(mb);
+		}
+		cfg ??= FindSavedEntryForPosition(runtimeState.position);
+		return cfg;
+	}
+
+	private bool TryReadMinerEnabledState(object miner, out bool enabled)
+	{
+		enabled = false;
+		if (!IsObjectAlive(miner)) return false;
+		if (miner is MonoBehaviour mb)
+		{
+			var resolved = ResolveCoreAutoMinerComponent(mb);
+			if (resolved != null)
+			{
+				miner = resolved;
+			}
+		}
+
+		var type = miner.GetType();
+		if (TryReadBoolMember(type, miner, "Enabled", out enabled)) return true;
+		if (TryReadBoolMember(type, miner, "IsEnabled", out enabled)) return true;
+		if (TryReadBoolMember(type, miner, "IsOn", out enabled)) return true;
+		if (TryReadBoolMember(type, miner, "On", out enabled)) return true;
+
+		if (TryReadBoolMember(type, miner, "Disabled", out var disabled))
+		{
+			enabled = !disabled;
+			return true;
+		}
+		if (TryReadBoolMember(type, miner, "IsDisabled", out disabled))
+		{
+			enabled = !disabled;
+			return true;
+		}
+		if (TryReadBoolMember(type, miner, "Off", out var off))
+		{
+			enabled = !off;
+			return true;
+		}
+		if (TryReadBoolMember(type, miner, "IsOff", out off))
+		{
+			enabled = !off;
+			return true;
+		}
+		if (TryReadBoolMember(type, miner, "Paused", out var paused))
+		{
+			enabled = !paused;
+			return true;
+		}
+		if (TryReadBoolMember(type, miner, "IsPaused", out paused))
+		{
+			enabled = !paused;
+			return true;
+		}
+
+		if (TryInvokeBoolMethod(type, miner, "IsEnabled", out enabled)) return true;
+		if (TryInvokeBoolMethod(type, miner, "IsOn", out enabled)) return true;
+		if (TryInvokeBoolMethod(type, miner, "GetEnabled", out enabled)) return true;
+		if (TryInvokeBoolMethod(type, miner, "GetIsEnabled", out enabled)) return true;
+
+		if (TryInvokeBoolMethod(type, miner, "IsDisabled", out disabled))
+		{
+			enabled = !disabled;
+			return true;
+		}
+		if (TryInvokeBoolMethod(type, miner, "IsOff", out off))
+		{
+			enabled = !off;
+			return true;
+		}
+		if (TryInvokeBoolMethod(type, miner, "IsPaused", out paused))
+		{
+			enabled = !paused;
+			return true;
+		}
+
+		return false;
+	}
+
+	private static bool TryReadBoolMember(Type type, object instance, string memberName, out bool value)
+	{
+		value = false;
+
+		var field = type.GetField(memberName, AnyInstance);
+		if (field != null && field.FieldType == typeof(bool))
+		{
+			try
+			{
+				value = (bool)(field.GetValue(instance) ?? false);
+				return true;
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		var prop = type.GetProperty(memberName, AnyInstance);
+		if (prop != null && prop.CanRead && prop.PropertyType == typeof(bool))
+		{
+			try
+			{
+				value = (bool)(prop.GetValue(instance, null) ?? false);
+				return true;
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		return false;
+	}
+
+	private static bool TryInvokeBoolMethod(Type type, object instance, string methodName, out bool value)
+	{
+		value = false;
+		var method = type.GetMethod(methodName, AnyInstance, null, Type.EmptyTypes, null);
+		if (method == null || method.ReturnType != typeof(bool)) return false;
+
+		try
+		{
+			value = (bool)(method.Invoke(instance, null) ?? false);
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
 	}
 }
 

@@ -1,16 +1,8 @@
 # Grouped Miners
 
-Shared miner grouping mod for MineMogul, with a public API designed for low-boilerplate integration.
+Shared miner grouping mod for MineMogul, with a public API intended for low-boilerplate host-mod integration.
 
-## Behavior
-
-- Players can assign miners to groups.
-- Groups can be renamed and toggled on/off.
-- Each group has:
-  - numeric `Id` (`1..N`) for UI ordering
-  - stable `GroupGuid` for cross-mod references
-
-## Get API
+## API Access
 
 Namespace: `GroupedMiners`  
 Type: `IGroupedMinersApi`  
@@ -22,10 +14,44 @@ using GroupedMinersHost = GroupedMiners.GroupedMiners;
 
 if (!GroupedMinersHost.TryGetApi(out var api) || api == null)
 {
-    // Host mod not ready/loaded.
-    return;
+    return; // Host mod not loaded/ready.
 }
 ```
+
+## Contract Guarantees
+
+- Group `Id` is for UI ordering only.
+- Group `GroupGuid` is the persistence-safe identifier for cross-mod references.
+- IDs may be reassigned after group removal to keep UI ordering contiguous.
+- GUIDs are generated once per group and are not reused after group deletion.
+- `groupId == 0` means ungrouped.
+- Miner lookup lists are snapshots (new list per call), not live views.
+- API calls are expected on the Unity main thread.
+
+## Enabled Semantics
+
+- Group enabled state represents miner operational state for that group.
+- Setting a group enabled/disabled toggles current miners in that group.
+- New or reassigned miners follow the current enabled state of their assigned group.
+
+## Group Deletion Semantics
+
+- Removing a group ungroups miners in that group (`groupId = 0`).
+- Higher group IDs shift down by one to remain contiguous.
+- Metadata stored for the removed group is deleted.
+- Metadata for shifted groups follows the shifted ID.
+
+## Miner Identity
+
+Returned `MonoBehaviour` miner instances are the miner components recognized by Grouped Miners.  
+They are safe for `transform`/`name` access and for passing back into Grouped Miners API methods.
+
+## Metadata Rules
+
+- Use namespaced keys: `my_mod.someSetting`.
+- Do not overwrite keys owned by other mods.
+- Metadata values are string-only (serialize structured data yourself).
+- Group metadata is runtime-only and is not persisted to disk.
 
 ## API Surface
 
@@ -36,6 +62,7 @@ readonly struct GroupedMinerGroup
     string GroupGuid { get; }
     string Name { get; }
     int MinerCount { get; }
+    bool IsEnabled { get; }
 }
 
 interface IGroupedMinersApi
@@ -51,26 +78,29 @@ interface IGroupedMinersApi
     IReadOnlyList<MonoBehaviour> GetMinersInGroup(int groupId);
     IReadOnlyList<MonoBehaviour> GetMinersInGroupByGuid(string groupGuid);
     bool TryGetTargetMiner(out MonoBehaviour miner);
-    int GetTargetMinersGroup();
+    bool TryGetTargetMinerGroup(out int groupId);
     bool TryGetTargetMinerGroupGuid(out string groupGuid);
     bool TryGetMinerGroup(MonoBehaviour miner, out int groupId);
     bool TryGetMinerGroupGuid(MonoBehaviour miner, out string groupGuid);
 
-    // Group assignment
-    bool ChangeMinerGroup(MonoBehaviour miner, string groupGuid);
-    bool ChangeTargetMinerGroup(string groupGuid);
+    // Assignment
     bool TryAssignMinerToGroup(MonoBehaviour miner, int groupId);
+    bool TryAssignMinerToGroupGuid(MonoBehaviour miner, string groupGuid);
+    bool TryAssignTargetMinerToGroup(int groupId);
+    bool TryAssignTargetMinerToGroupGuid(string groupGuid);
+    bool TryUngroupMiner(MonoBehaviour miner);
+    bool TryUngroupTargetMiner();
     bool TryAssignMinerPositionToGroup(Vector3 position, int groupId, float maxDistance = 0.12f);
     bool TryAssignMinerPositionToGroupByGuid(Vector3 position, string groupGuid, float maxDistance = 0.12f);
 
-    // Group naming / toggles
+    // Group properties
     bool SetGroupName(int groupId, string name);
     bool SetGroupNameByGuid(string groupGuid, string name);
     bool SetGroupEnabled(int groupId, bool enabled);
     bool SetGroupEnabledByGuid(string groupGuid, bool enabled);
     bool SetAllGroupsEnabled(bool enabled);
 
-    // Group metadata for other mods
+    // Metadata
     void SetGroupValue(int groupId, string key, string value);
     bool SetGroupValueByGuid(string groupGuid, string key, string value);
     bool TryGetGroupValue(int groupId, string key, out string value);
@@ -80,172 +110,102 @@ interface IGroupedMinersApi
 }
 ```
 
-## Usage Examples (Every API)
+## Usage Examples
 
 ### Group discovery / lookup
 
 ```csharp
 var groups = api.GetGroups();
 
+foreach (var g in groups)
+{
+    Logger.LogInfo($"[{g.Id}] {g.Name} guid={g.GroupGuid} miners={g.MinerCount} enabled={g.IsEnabled}");
+}
+
 if (api.TryGetGroupById(2, out var byId))
 {
-    Logger.LogInfo($"ID 2 => {byId.Name} [{byId.GroupGuid}]");
-}
-
-if (groups.Count > 0 && api.TryGetGroupByGuid(groups[0].GroupGuid, out var byGuid))
-{
-    Logger.LogInfo($"GUID => {byGuid.Id}:{byGuid.Name}");
-}
-
-if (groups.Count > 0 && api.TryGetGroupIdByGuid(groups[0].GroupGuid, out var gid))
-{
-    Logger.LogInfo($"Resolved ID = {gid}");
-}
-
-if (api.TryGetGroupGuidById(1, out var guid1))
-{
-    Logger.LogInfo($"Group 1 GUID = {guid1}");
+    Logger.LogInfo($"ID 2 => {byId.Name} ({byId.GroupGuid}) enabled={byId.IsEnabled}");
 }
 ```
 
 ### Miner targeting / membership lookup
 
 ```csharp
-// By ID
-foreach (var miner in api.GetMinersInGroup(2))
-{
-    var p = miner.transform.position;
-    Logger.LogInfo($"Group 2 miner at {p.x:0.##}, {p.y:0.##}, {p.z:0.##}");
-}
-
-// By GUID
-if (api.TryGetGroupGuidById(2, out var group2Guid))
-{
-    foreach (var miner in api.GetMinersInGroupByGuid(group2Guid))
-    {
-        Logger.LogInfo($"GUID group miner: {miner.name}");
-    }
-}
-
-// Target miner object
 if (api.TryGetTargetMiner(out var targetMiner))
 {
     Logger.LogInfo($"Target miner: {targetMiner.name}");
 }
 
-// Target group as ID
-var targetGroupId = api.GetTargetMinersGroup(); // 0 means none/ungrouped/no target
+if (api.TryGetTargetMinerGroup(out var targetGroupId))
+{
+    Logger.LogInfo($"Target group ID: {targetGroupId}");
+}
 
-// Target group as GUID
 if (api.TryGetTargetMinerGroupGuid(out var targetGroupGuid))
 {
     Logger.LogInfo($"Target group GUID: {targetGroupGuid}");
 }
 
-// Any miner -> group ID/GUID
-if (api.TryGetTargetMiner(out var m))
+foreach (var miner in api.GetMinersInGroup(2))
 {
-    api.TryGetMinerGroup(m, out var mGroupId);
-    api.TryGetMinerGroupGuid(m, out var mGroupGuid);
-    Logger.LogInfo($"Miner group: id={mGroupId}, guid={mGroupGuid}");
+    var p = miner.transform.position;
+    Logger.LogInfo($"Group 2 miner at {p.x:0.##}, {p.y:0.##}, {p.z:0.##}");
 }
 ```
 
-### Group assignment
+### Assignment
 
 ```csharp
-// Assign specific miner by GUID
-if (api.TryGetTargetMiner(out var miner) && api.TryGetGroupGuidById(1, out var g1))
+// Assign by ID
+if (api.TryGetTargetMiner(out var miner))
 {
-    api.ChangeMinerGroup(miner, g1);
+    api.TryAssignMinerToGroup(miner, 2);
 }
 
-// Assign currently targeted miner by GUID
-if (api.TryGetGroupGuidById(3, out var g3))
+// Assign by GUID
+if (api.TryGetTargetMiner(out var miner2) &&
+    api.TryGetGroupGuidById(3, out var g3))
 {
-    api.ChangeTargetMinerGroup(g3);
+    api.TryAssignMinerToGroupGuid(miner2, g3);
 }
 
-// Assign specific miner by ID
-if (api.TryGetTargetMiner(out var miner2))
+// Assign targeted miner
+api.TryAssignTargetMinerToGroup(1);
+
+if (api.TryGetGroupGuidById(4, out var g4))
 {
-    api.TryAssignMinerToGroup(miner2, 2);
+    api.TryAssignTargetMinerToGroupGuid(g4);
 }
 
-// Assign nearest miner to a world position by ID
+// Ungroup
+if (api.TryGetTargetMiner(out var miner3))
+{
+    api.TryUngroupMiner(miner3);
+}
+api.TryUngroupTargetMiner();
+
+// Assign nearest miner to world position
 api.TryAssignMinerPositionToGroup(new Vector3(10f, 1f, -5f), 2, 0.2f);
-
-// Assign nearest miner to a world position by GUID
-if (api.TryGetGroupGuidById(2, out var g2))
-{
-    api.TryAssignMinerPositionToGroupByGuid(new Vector3(10f, 1f, -5f), g2, 0.2f);
-}
 ```
 
-### Group naming / toggles
+### Group properties
 
 ```csharp
-// Rename by ID
 api.SetGroupName(2, "Smelter Line");
-
-// Rename by GUID
-if (api.TryGetGroupGuidById(2, out var g2))
-{
-    api.SetGroupNameByGuid(g2, "Smelter Line");
-}
-
-// Toggle by ID
-api.SetGroupEnabled(2, true);
-
-// Toggle by GUID
-if (api.TryGetGroupGuidById(2, out var groupGuid))
-{
-    api.SetGroupEnabledByGuid(groupGuid, false);
-}
-
-// Toggle all
+api.SetGroupEnabled(2, false);
 api.SetAllGroupsEnabled(true);
 ```
 
-### Group metadata for custom mod features
+### Metadata
 
 ```csharp
-// Set by ID
 api.SetGroupValue(2, "my_mod.mode", "aggressive");
 
-// Set by GUID
-if (api.TryGetGroupGuidById(2, out var g2))
-{
-    api.SetGroupValueByGuid(g2, "my_mod.color", "#22ccff");
-}
-
-// Read by ID
 if (api.TryGetGroupValue(2, "my_mod.mode", out var mode))
 {
     Logger.LogInfo($"Mode = {mode}");
 }
 
-// Read by GUID
-if (api.TryGetGroupGuidById(2, out var guid) &&
-    api.TryGetGroupValueByGuid(guid, "my_mod.color", out var color))
-{
-    Logger.LogInfo($"Color = {color}");
-}
-
-// Remove by ID
 api.RemoveGroupValue(2, "my_mod.mode");
-
-// Remove by GUID
-if (api.TryGetGroupGuidById(2, out var guid2))
-{
-    api.RemoveGroupValueByGuid(guid2, "my_mod.color");
-}
 ```
-
-## Practical Guidance
-
-- Prefer GUID-based methods for persisted integrations.
-- Use ID-based methods for quick UI actions where order matters.
-- `groupId == 0` means ungrouped/no group.
-- `Try*` methods return `false` when target/group is invalid or unavailable.
 

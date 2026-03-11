@@ -46,6 +46,7 @@ public sealed partial class GroupedMiners
     private int _presetCount = DefaultPresetCount;
     private readonly List<string> _groupNames = new();
     private readonly List<string> _groupGuids = new();
+    private readonly List<bool> _groupEnabledStates = new();
     private bool _debugLogging;
     private int _debugAppliedConfigsThisFrame;
     private bool _debugSavePathResolved;

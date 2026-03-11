@@ -128,6 +128,7 @@ public sealed partial class GroupedMiners
 		GUI.SetNextControlName(cacheKey);
 		text = GUILayout.TextField(text ?? string.Empty, _textFieldStyle ?? GUI.skin.textField, GUILayout.Width(170f));
 		GUILayout.Space(6f);
+		DrawStatusDotControl(group);
 		if (UiButton("On", GUILayout.Width(70f)))
 		{
 			ToggleGroupMiners(group, true);
@@ -160,6 +161,7 @@ public sealed partial class GroupedMiners
 	{
 		GUILayout.BeginHorizontal();
 		GUILayout.Label(label, _labelStyle ?? GUI.skin.label, GUILayout.Width(labelWidth));
+		DrawStatusDotControl(group);
 		if (UiButton("On", GUILayout.Width(80f)))
 		{
 			if (group < 0) ToggleAllMiners(true);
@@ -171,6 +173,20 @@ public sealed partial class GroupedMiners
 			else ToggleGroupMiners(group, false);
 		}
 		GUILayout.EndHorizontal();
+	}
+
+	private void DrawStatusDotControl(int group)
+	{
+		var summary = GetEnabledSummaryForGroup(group);
+		var previousColor = GUI.color;
+		GUI.color = summary switch
+		{
+			MinerEnabledSummary.AllOn => new Color(0.23f, 0.85f, 0.42f, 1f),
+			MinerEnabledSummary.Mixed => new Color(0.98f, 0.65f, 0.21f, 1f),
+			_ => new Color(0.92f, 0.27f, 0.27f, 1f)
+		};
+		GUILayout.Label("●", _labelStyle ?? GUI.skin.label, GUILayout.Width(18f));
+		GUI.color = previousColor;
 	}
 
 	private void DrawSectionTitle(string title)
